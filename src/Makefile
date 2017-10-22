@@ -28,8 +28,8 @@ ifeq ($(KERNEL),Linux)
 endif
 
 ### Executable name
-EXE = McBrain_2017_v25b
-# bench =  6194149
+EXE = McBrain_2017_v30_TCEC-X
+# bench =  5952543
 
 ### Installation dir definitions
 PREFIX = /usr/local
@@ -37,6 +37,7 @@ BINDIR = $(PREFIX)/bin
 
 ### Built-in benchmark for pgo-builds
 PGOBENCH = ./$(EXE) bench
+###PGOBENCH2 = ./$(EXE) bench 16 2 10
 
 ### Object files
 OBJS = movegen.o search.o evaluate.o material.o position.o psqt.o \
@@ -434,14 +435,13 @@ help:
 build: config-sanity
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) all
 	strip $(EXE)
-	cp $(EXE) /Users/michaelbyrne/cluster.mfb/$(EXE)
 
 profile-build: config-sanity objclean profileclean
 	@echo ""
-	@echo "Step 1/4. Building instrumented executable ..."
+	@echo "Step 1/5. Building instrumented executable ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) $(profile_make)
 	@echo ""
-	@echo "Step 2/4. Running benchmark for pgo-build ..."
+	@echo "Step 2/5. Running benchmark for pgo-build ..."
 	$(PGOBENCH) > /dev/null
 	@echo ""
 	@echo "Step 3/4. Building optimized executable ..."
@@ -451,7 +451,6 @@ profile-build: config-sanity objclean profileclean
 	@echo "Step 4/4. Deleting profile data ..."
 	$(MAKE) ARCH=$(ARCH) COMP=$(COMP) profileclean
 	strip $(EXE)
-	cp $(EXE) /Users/michaelbyrne/cluster.mfb/$(EXE)
 
 strip:
 	strip $(EXE)

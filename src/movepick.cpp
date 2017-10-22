@@ -1,32 +1,32 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
-
-  Stockfish is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  Stockfish is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ McBrain, a UCI chess playing engine derived from Stockfish and Glaurung 2.1
+ Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
+ Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad (Stockfish Authors)
+ Copyright (C) 2015-2016 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (Stockfish Authors)
+ Copyright (C) 2017 Michael Byrne, Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (McBrain Authors)
+ 
+ McBrain is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ 
+ McBrain is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include <cassert>
 
 #include "movepick.h"
-#include "thread.h"
 
 namespace {
 
   enum Stages {
-    MAIN_SEARCH, CAPTURES_INIT, GOOD_CAPTURES, KILLERS, COUNTERMOVE, QUIET_INIT, QUIET, BAD_CAPTURES,
+	MAIN_SEARCH, CAPTURES_INIT, CAPTURE_KILLERS, GOOD_CAPTURES, KILLERS, COUNTERMOVE, QUIET_INIT, QUIET, BAD_CAPTURES,
     EVASION, EVASIONS_INIT, ALL_EVASIONS,
     PROBCUT, PROBCUT_INIT, PROBCUT_CAPTURES,
     QSEARCH_WITH_CHECKS, QCAPTURES_1_INIT, QCAPTURES_1, QCHECKS,
@@ -67,23 +67,23 @@ namespace {
 /// search captures, promotions, and some checks) and how important good move
 /// ordering is at the current node.
 
-MovePicker::MovePicker(const Position& p, Move ttm, Depth d, Search::Stack* s)
-           : pos(p), ss(s), depth(d) {
+/// MovePicker constructor for the main search
+MovePicker::MovePicker(const Position& p, Move ttm, Depth d, const ButterflyHistory* mh,
+                       const PieceToHistory** ch, Move cm, Move* killers_p)
+           : pos(p), mainHistory(mh), contHistory(ch), countermove(cm),
+             killers{killers_p[0], killers_p[1], killers_p[2], killers_p[3]},
+			 depth(d){
 
   assert(d > DEPTH_ZERO);
-
-  Square prevSq = to_sq((ss-1)->currentMove);
-  countermove = pos.this_thread()->counterMoves[pos.piece_on(prevSq)][prevSq];
-  killers[0] = ss->killers[0];
-  killers[1] = ss->killers[1];
 
   stage = pos.checkers() ? EVASION : MAIN_SEARCH;
   ttMove = ttm && pos.pseudo_legal(ttm) ? ttm : MOVE_NONE;
   stage += (ttMove == MOVE_NONE);
 }
 
-MovePicker::MovePicker(const Position& p, Move ttm, Depth d, Square s)
-           : pos(p) {
+/// MovePicker constructor for quiescence search
+MovePicker::MovePicker(const Position& p, Move ttm, Depth d, const ButterflyHistory* mh, Square s)
+           : pos(p), mainHistory(mh) {
 
   assert(d <= DEPTH_ZERO);
 
@@ -107,14 +107,14 @@ MovePicker::MovePicker(const Position& p, Move ttm, Depth d, Square s)
   stage += (ttMove == MOVE_NONE);
 }
 
+/// MovePicker constructor for ProbCut: we generate captures with SEE higher
+/// than or equal to the given threshold.
 MovePicker::MovePicker(const Position& p, Move ttm, Value th)
            : pos(p), threshold(th) {
 
   assert(!pos.checkers());
 
   stage = PROBCUT;
-
-  // In ProbCut we generate captures with SEE higher than or equal to the given threshold
   ttMove =   ttm
           && pos.pseudo_legal(ttm)
           && pos.capture(ttm)
@@ -123,55 +123,34 @@ MovePicker::MovePicker(const Position& p, Move ttm, Value th)
   stage += (ttMove == MOVE_NONE);
 }
 
+/// score() assigns a numerical value to each move in a list, used for sorting.
+/// Captures are ordered by Most Valuable Victim (MVV), preferring captures
+/// near our home rank. Quiets are ordered using the histories.
+template<GenType Type>
+void MovePicker::score() {
 
-/// score() assigns a numerical value to each move in a move list. The moves with
-/// highest values will be picked first.
-template<>
-void MovePicker::score<CAPTURES>() {
-  // Winning and equal captures in the main search are ordered by MVV, preferring
-  // captures near our home rank. Surprisingly, this appears to perform slightly
-  // better than SEE-based move ordering: exchanging big pieces before capturing
-  // a hanging piece probably helps to reduce the subtree size.
-  // In the main search we want to push captures with negative SEE values to the
-  // badCaptures[] array, but instead of doing it now we delay until the move
-  // has been picked up, saving some SEE calls in case we get a cutoff.
-  for (auto& m : *this)
-      m.value =  PieceValue[MG][pos.piece_on(to_sq(m))]
-               - Value(200 * relative_rank(pos.side_to_move(), to_sq(m)));
-}
-
-template<>
-void MovePicker::score<QUIETS>() {
-
-  const ButterflyHistory& history = pos.this_thread()->history;
-
-  const PieceToHistory& cmh = *(ss-1)->history;
-  const PieceToHistory& fmh = *(ss-2)->history;
-  const PieceToHistory& fm2 = *(ss-4)->history;
-
-  Color c = pos.side_to_move();
+  static_assert(Type == CAPTURES || Type == QUIETS || Type == EVASIONS, "Wrong type");
 
   for (auto& m : *this)
-      m.value =  cmh[pos.moved_piece(m)][to_sq(m)]
-               + fmh[pos.moved_piece(m)][to_sq(m)]
-               + fm2[pos.moved_piece(m)][to_sq(m)]
-               + history[c][from_to(m)];
-}
-
-template<>
-void MovePicker::score<EVASIONS>() {
-  // Try captures ordered by MVV/LVA, then non-captures ordered by stats heuristics
-  const ButterflyHistory& history = pos.this_thread()->history;
-  Color c = pos.side_to_move();
-
-  for (auto& m : *this)
-      if (pos.capture(m))
+      if (Type == CAPTURES)
           m.value =  PieceValue[MG][pos.piece_on(to_sq(m))]
-                   - Value(type_of(pos.moved_piece(m))) + (1 << 28);
-      else
-          m.value = history[c][from_to(m)];
-}
+                   - Value(200 * relative_rank(pos.side_to_move(), to_sq(m)));
 
+      else if (Type == QUIETS)
+          m.value =  (*mainHistory)[pos.side_to_move()][from_to(m)]
+                   + (*contHistory[0])[pos.moved_piece(m)][to_sq(m)]
+                   + (*contHistory[1])[pos.moved_piece(m)][to_sq(m)]
+                   + (*contHistory[3])[pos.moved_piece(m)][to_sq(m)];
+
+      else // Type == EVASIONS
+      {
+          if (pos.capture(m))
+              m.value =  PieceValue[MG][pos.piece_on(to_sq(m))]
+                       - Value(type_of(pos.moved_piece(m)));
+          else
+              m.value = (*mainHistory)[pos.side_to_move()][from_to(m)] - (1 << 28);
+      }
+}
 
 /// next_move() is the most important method of the MovePicker class. It returns
 /// a new pseudo legal move every time it is called, until there are no more moves
@@ -194,13 +173,33 @@ Move MovePicker::next_move(bool skipQuiets) {
       endMoves = generate<CAPTURES>(pos, cur);
       score<CAPTURES>();
       ++stage;
-      /* fallthrough */
+
+      move = killers[2];  // First capture killer move
+            if(   move != MOVE_NONE
+               && move != ttMove
+               && pos.pseudo_legal(move)
+               && pos.capture_or_promotion(move))
+                return move;
+		    /* fallthrough */
+
+   case CAPTURE_KILLERS:
+		++stage;
+		move = killers[3]; // Second capture killer move
+		if(   move != MOVE_NONE
+		   && move != ttMove
+		   && pos.pseudo_legal(move)
+		   && pos.capture_or_promotion(move))
+		   return move;
+		    /* fallthrough */
+
 
   case GOOD_CAPTURES:
       while (cur < endMoves)
       {
           move = pick_best(cur++, endMoves);
-          if (move != ttMove)
+          if (    move != ttMove
+                 && move != killers[2]
+                 && move != killers[3])
           {
               if (pos.see_ge(move))
                   return move;

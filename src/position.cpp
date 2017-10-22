@@ -1,22 +1,23 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
-
-  Stockfish is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  Stockfish is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ McBrain, a UCI chess playing engine derived from Stockfish and Glaurung 2.1
+ Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
+ Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad (Stockfish Authors)
+ Copyright (C) 2015-2016 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (Stockfish Authors)
+ Copyright (C) 2017 Michael Byrne, Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (McBrain Authors)
+ 
+ McBrain is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ 
+ McBrain is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include <algorithm>
 #include <cassert>
@@ -272,7 +273,7 @@ Position& Position::set(const string& fenStr, bool isChess960, StateInfo* si, Th
   // 5-6. Halfmove clock and fullmove number
   ss >> std::skipws >> st->rule50 >> gamePly;
 
-  // Convert from fullmove starting from 1 to ply starting from 0,
+  // Convert from fullmove starting from 1 to gamePly starting from 0,
   // handle also common incorrect FEN with fullmove = 0.
   gamePly = std::max(2 * (gamePly - 1), 0) + (sideToMove == BLACK);
 
@@ -381,8 +382,7 @@ void Position::set_state(StateInfo* si) const {
 
 /// Position::set() is an overload to initialize the position object with
 /// the given endgame code string like "KBPKN". It is mainly a helper to
-/// get the material key out of an endgame code. Position is not playable,
-/// indeed is even not guaranteed to be legal.
+/// get the material key out of an endgame code.
 
 Position& Position::set(const string& code, Color c, StateInfo* si) {
 
@@ -394,8 +394,8 @@ Position& Position::set(const string& code, Color c, StateInfo* si) {
 
   std::transform(sides[c].begin(), sides[c].end(), sides[c].begin(), tolower);
 
-  string fenStr =  sides[0] + char(8 - sides[0].length() + '0') + "/8/8/8/8/8/8/"
-                 + sides[1] + char(8 - sides[1].length() + '0') + " w - - 0 10";
+  string fenStr = "8/" + sides[0] + char(8 - sides[0].length() + '0') + "/8/8/8/8/"
+                       + sides[1] + char(8 - sides[1].length() + '0') + "/8 w - - 0 10";
 
   return set(fenStr, false, si, nullptr);
 }
@@ -451,19 +451,6 @@ const string Position::fen() const {
 }
 
 
-/// Position::game_phase() calculates the game phase interpolating total non-pawn
-/// material between endgame and midgame limits.
-
-Phase Position::game_phase() const {
-
-  Value npm = st->nonPawnMaterial[WHITE] + st->nonPawnMaterial[BLACK];
-
-  npm = std::max(EndgameLimit, std::min(npm, MidgameLimit));
-
-  return Phase(((npm - EndgameLimit) * PHASE_MIDGAME) / (MidgameLimit - EndgameLimit));
-}
-
-
 /// Position::slider_blockers() returns a bitboard of all the pieces (both colors)
 /// that are blocking attacks on the square 's' from 'sliders'. A piece blocks a
 /// slider if removing that piece from the board would result in a position where
@@ -477,7 +464,7 @@ Bitboard Position::slider_blockers(Bitboard sliders, Square s, Bitboard& pinners
   pinners = 0;
 
   // Snipers are sliders that attack 's' when a piece is removed
-  Bitboard snipers = (  (PseudoAttacks[ROOK  ][s] & pieces(QUEEN, ROOK))
+  Bitboard snipers = (  (PseudoAttacks[  ROOK][s] & pieces(QUEEN, ROOK))
                       | (PseudoAttacks[BISHOP][s] & pieces(QUEEN, BISHOP))) & sliders;
 
   while (snipers)
@@ -504,7 +491,7 @@ Bitboard Position::attackers_to(Square s, Bitboard occupied) const {
   return  (attacks_from<PAWN>(s, BLACK)    & pieces(WHITE, PAWN))
         | (attacks_from<PAWN>(s, WHITE)    & pieces(BLACK, PAWN))
         | (attacks_from<KNIGHT>(s)         & pieces(KNIGHT))
-        | (attacks_bb<ROOK  >(s, occupied) & pieces(ROOK,   QUEEN))
+        | (attacks_bb<  ROOK>(s, occupied) & pieces(  ROOK, QUEEN))
         | (attacks_bb<BISHOP>(s, occupied) & pieces(BISHOP, QUEEN))
         | (attacks_from<KING>(s)           & pieces(KING));
 }
@@ -691,7 +678,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
   assert(is_ok(m));
   assert(&newSt != st);
 
-  ++nodes;
+  thisThread->nodes.fetch_add(1, std::memory_order_relaxed);
   Key k = st->key ^ Zobrist::side;
 
   // Copy some fields of the old state to our new StateInfo object except the
@@ -1000,18 +987,16 @@ Key Position::key_after(Move m) const {
 
 
 /// Position::see_ge (Static Exchange Evaluation Greater or Equal) tests if the
-/// SEE value of move is greater or equal to the given value. We'll use an
+/// SEE value of move is greater or equal to the given threshold. We'll use an
 /// algorithm similar to alpha-beta pruning with a null window.
 
-bool Position::see_ge(Move m, Value v) const {
+bool Position::see_ge(Move m, Value threshold) const {
 
   assert(is_ok(m));
 
-  // Castling moves are implemented as king capturing the rook so cannot be
-  // handled correctly. Simply assume the SEE value is VALUE_ZERO that is always
-  // correct unless in the rare case the rook ends up under attack.
-  if (type_of(m) == CASTLING)
-      return VALUE_ZERO >= v;
+  // Only deal with normal moves, assume others pass a simple see
+  if (type_of(m) != NORMAL)
+      return VALUE_ZERO >= threshold;
 
   Square from = from_sq(m), to = to_sq(m);
   PieceType nextVictim = type_of(piece_on(from));
@@ -1019,30 +1004,18 @@ bool Position::see_ge(Move m, Value v) const {
   Value balance; // Values of the pieces taken by us minus opponent's ones
   Bitboard occupied, stmAttackers;
 
-  if (type_of(m) == ENPASSANT)
-  {
-      occupied = SquareBB[to - pawn_push(~stm)]; // Remove the captured pawn
-      balance = PieceValue[MG][PAWN];
-  }
-  else
-  {
-      balance = PieceValue[MG][piece_on(to)];
-      occupied = 0;
-  }
+  balance = PieceValue[MG][piece_on(to)];
 
-  if (balance < v)
+  if (balance < threshold)
       return false;
-
-  if (nextVictim == KING)
-      return true;
 
   balance -= PieceValue[MG][nextVictim];
 
-  if (balance >= v)
+  if (balance >= threshold) // Always true if nextVictim == KING
       return true;
 
   bool relativeStm = true; // True if the opponent is to move
-  occupied ^= pieces() ^ from ^ to;
+  occupied = pieces() ^ from ^ to;
 
   // Find all attackers to the destination square, with the moving piece removed,
   // but possibly an X-ray attacker added behind it.
@@ -1071,7 +1044,7 @@ bool Position::see_ge(Move m, Value v) const {
 
       relativeStm = !relativeStm;
 
-      if (relativeStm == (balance >= v))
+      if (relativeStm == (balance >= threshold))
           return relativeStm;
 
       stm = ~stm;
@@ -1099,11 +1072,10 @@ bool Position::is_draw(int ply) const {
   {
       stp = stp->previous->previous;
 
-      // At root position ply is 1, so return a draw score if a position
-      // repeats once earlier but strictly after the root, or repeats twice
-      // before or at the root.
+      // Return a draw score if a position repeats once earlier but strictly
+      // after the root, or repeats twice before or at the root.
       if (   stp->key == st->key
-          && ++cnt + (ply - 1 > i) == 2)
+          && ++cnt + (ply > i) == 2)
           return true;
   }
 
@@ -1146,78 +1118,72 @@ void Position::flip() {
 }
 
 
-/// Position::pos_is_ok() performs some consistency checks for the position object.
+/// Position::pos_is_ok() performs some consistency checks for the
+/// position object and raises an asserts if something wrong is detected.
 /// This is meant to be helpful when debugging.
 
-bool Position::pos_is_ok(int* failedStep) const {
+bool Position::pos_is_ok() const {
 
   const bool Fast = true; // Quick (default) or full check?
 
-  enum { Default, King, Bitboards, State, Lists, Castling };
+  if (   (sideToMove != WHITE && sideToMove != BLACK)
+      || piece_on(square<KING>(WHITE)) != W_KING
+      || piece_on(square<KING>(BLACK)) != B_KING
+      || (   ep_square() != SQ_NONE
+          && relative_rank(sideToMove, ep_square()) != RANK_6))
+      assert(0 && "pos_is_ok: Default");
 
-  for (int step = Default; step <= (Fast ? Default : Castling); step++)
+  if (Fast)
+      return true;
+
+  if (   pieceCount[W_KING] != 1
+      || pieceCount[B_KING] != 1
+      || attackers_to(square<KING>(~sideToMove)) & pieces(sideToMove))
+      assert(0 && "pos_is_ok: Kings");
+
+  if (   (pieces(PAWN) & (Rank1BB | Rank8BB))
+      || pieceCount[W_PAWN] > 8
+      || pieceCount[B_PAWN] > 8)
+      assert(0 && "pos_is_ok: Pawns");
+
+  if (   (pieces(WHITE) & pieces(BLACK))
+      || (pieces(WHITE) | pieces(BLACK)) != pieces()
+      || popcount(pieces(WHITE)) > 16
+      || popcount(pieces(BLACK)) > 16)
+      assert(0 && "pos_is_ok: Bitboards");
+
+  for (PieceType p1 = PAWN; p1 <= KING; ++p1)
+      for (PieceType p2 = PAWN; p2 <= KING; ++p2)
+          if (p1 != p2 && (pieces(p1) & pieces(p2)))
+              assert(0 && "pos_is_ok: Bitboards");
+
+  StateInfo si = *st;
+  set_state(&si);
+  if (std::memcmp(&si, st, sizeof(StateInfo)))
+      assert(0 && "pos_is_ok: State");
+
+  for (Piece pc : Pieces)
   {
-      if (failedStep)
-          *failedStep = step;
+      if (   pieceCount[pc] != popcount(pieces(color_of(pc), type_of(pc)))
+          || pieceCount[pc] != std::count(board, board + SQUARE_NB, pc))
+          assert(0 && "pos_is_ok: Pieces");
 
-      if (step == Default)
-          if (   (sideToMove != WHITE && sideToMove != BLACK)
-              || piece_on(square<KING>(WHITE)) != W_KING
-              || piece_on(square<KING>(BLACK)) != B_KING
-              || (   ep_square() != SQ_NONE
-                  && relative_rank(sideToMove, ep_square()) != RANK_6))
-              return false;
-
-      if (step == King)
-          if (   std::count(board, board + SQUARE_NB, W_KING) != 1
-              || std::count(board, board + SQUARE_NB, B_KING) != 1
-              || attackers_to(square<KING>(~sideToMove)) & pieces(sideToMove))
-              return false;
-
-      if (step == Bitboards)
-      {
-          if (  (pieces(WHITE) & pieces(BLACK))
-              ||(pieces(WHITE) | pieces(BLACK)) != pieces())
-              return false;
-
-          for (PieceType p1 = PAWN; p1 <= KING; ++p1)
-              for (PieceType p2 = PAWN; p2 <= KING; ++p2)
-                  if (p1 != p2 && (pieces(p1) & pieces(p2)))
-                      return false;
-      }
-
-      if (step == State)
-      {
-          StateInfo si = *st;
-          set_state(&si);
-          if (std::memcmp(&si, st, sizeof(StateInfo)))
-              return false;
-      }
-
-      if (step == Lists)
-          for (Piece pc : Pieces)
-          {
-              if (pieceCount[pc] != popcount(pieces(color_of(pc), type_of(pc))))
-                  return false;
-
-              for (int i = 0; i < pieceCount[pc]; ++i)
-                  if (board[pieceList[pc][i]] != pc || index[pieceList[pc][i]] != i)
-                      return false;
-          }
-
-      if (step == Castling)
-          for (Color c = WHITE; c <= BLACK; ++c)
-              for (CastlingSide s = KING_SIDE; s <= QUEEN_SIDE; s = CastlingSide(s + 1))
-              {
-                  if (!can_castle(c | s))
-                      continue;
-
-                  if (   piece_on(castlingRookSquare[c | s]) != make_piece(c, ROOK)
-                      || castlingRightsMask[castlingRookSquare[c | s]] != (c | s)
-                      ||(castlingRightsMask[square<KING>(c)] & (c | s)) != (c | s))
-                      return false;
-              }
+      for (int i = 0; i < pieceCount[pc]; ++i)
+          if (board[pieceList[pc][i]] != pc || index[pieceList[pc][i]] != i)
+              assert(0 && "pos_is_ok: Index");
   }
+
+  for (Color c = WHITE; c <= BLACK; ++c)
+      for (CastlingSide s = KING_SIDE; s <= QUEEN_SIDE; s = CastlingSide(s + 1))
+      {
+          if (!can_castle(c | s))
+              continue;
+
+          if (   piece_on(castlingRookSquare[c | s]) != make_piece(c, ROOK)
+              || castlingRightsMask[castlingRookSquare[c | s]] != (c | s)
+              || (castlingRightsMask[square<KING>(c)] & (c | s)) != (c | s))
+              assert(0 && "pos_is_ok: Castling");
+      }
 
   return true;
 }

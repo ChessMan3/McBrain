@@ -1,22 +1,23 @@
 /*
-  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
-
-  Stockfish is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  Stockfish is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+ McBrain, a UCI chess playing engine derived from Stockfish and Glaurung 2.1
+ Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
+ Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad (Stockfish Authors)
+ Copyright (C) 2015-2016 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (Stockfish Authors)
+ Copyright (C) 2017 Michael Byrne, Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (McBrain Authors)
+ 
+ McBrain is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ 
+ McBrain is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #ifndef POSITION_H_INCLUDED
 #define POSITION_H_INCLUDED
@@ -56,7 +57,10 @@ struct StateInfo {
   Bitboard   checkSquares[PIECE_TYPE_NB];
 };
 
-// In a std::deque references to elements are unaffected upon resizing
+/// A list to keep track of the position states along the setup moves (from the
+/// start position to the position just before the search starts). Needed by
+/// 'draw by repetition' detection. Use a std::deque because pointers to
+/// elements are not invalidated upon list resizing.
 typedef std::unique_ptr<std::deque<StateInfo>> StateListPtr;
 
 
@@ -121,7 +125,6 @@ public:
   bool capture_or_promotion(Move m) const;
   bool gives_check(Move m) const;
   bool advanced_pawn_push(Move m) const;
-  bool far_advanced_pawn_push(Move m) const;
   Piece moved_piece(Move m) const;
   Piece captured_piece() const;
 
@@ -137,7 +140,7 @@ public:
   void undo_null_move();
 
   // Static Exchange Evaluation
-  bool see_ge(Move m, Value value = VALUE_ZERO) const;
+  bool see_ge(Move m, Value threshold = VALUE_ZERO) const;
 
   // Accessing hash keys
   Key key() const;
@@ -147,11 +150,9 @@ public:
 
   // Other properties of the position
   Color side_to_move() const;
-  Phase game_phase() const;
   int game_ply() const;
   bool is_chess960() const;
   Thread* this_thread() const;
-  uint64_t nodes_searched() const;
   bool is_draw(int ply) const;
   int rule50_count() const;
   Score psq_score() const;
@@ -159,7 +160,7 @@ public:
   Value non_pawn_material() const;
 
   // Position consistency check, for debugging
-  bool pos_is_ok(int* failedStep = nullptr) const;
+  bool pos_is_ok() const;
   void flip();
 
 private:
@@ -185,7 +186,6 @@ private:
   int castlingRightsMask[SQUARE_NB];
   Square castlingRookSquare[CASTLING_RIGHT_NB];
   Bitboard castlingPath[CASTLING_RIGHT_NB];
-  uint64_t nodes;
   int gamePly;
   Color sideToMove;
   Thread* thisThread;
@@ -318,11 +318,6 @@ inline bool Position::advanced_pawn_push(Move m) const {
         && relative_rank(sideToMove, from_sq(m)) > RANK_4;
 }
 
-inline bool Position::far_advanced_pawn_push(Move m) const {
-	return   type_of(moved_piece(m)) == PAWN
-	&& relative_rank(sideToMove, from_sq(m)) > RANK_6;
-}
-
 inline Key Position::key() const {
   return st->key;
 }
@@ -353,10 +348,6 @@ inline int Position::game_ply() const {
 
 inline int Position::rule50_count() const {
   return st->rule50;
-}
-
-inline uint64_t Position::nodes_searched() const {
-  return nodes;
 }
 
 inline bool Position::opposite_bishops() const {
