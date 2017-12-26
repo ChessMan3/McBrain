@@ -1,23 +1,22 @@
 /*
- McBrain, a UCI chess playing engine derived from Stockfish and Glaurung 2.1
- Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
- Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad (Stockfish Authors)
- Copyright (C) 2015-2016 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (Stockfish Authors)
- Copyright (C) 2017 Michael Byrne, Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad (McBrain Authors)
- 
- McBrain is free software: you can redistribute it and/or modify
- it under the terms of the GNU General Public License as published by
- the Free Software Foundation, either version 3 of the License, or
- (at your option) any later version.
- 
- McBrain is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU General Public License for more details.
- 
- You should have received a copy of the GNU General Public License
- along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+  Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
+  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
+  Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+
+  Stockfish is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  Stockfish is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
 
 #include <cassert>
 
@@ -26,12 +25,12 @@
 namespace {
 
   enum Stages {
-	MAIN_SEARCH, CAPTURES_INIT, CAPTURE_KILLERS, GOOD_CAPTURES, KILLERS, COUNTERMOVE, QUIET_INIT, QUIET, BAD_CAPTURES,
-	  EVASION, EVASIONS_INIT, ALL_EVASIONS,
-	  PROBCUT, PROBCUT_INIT, PROBCUT_CAPTURES,
-	  QSEARCH_WITH_CHECKS, QCAPTURES_1_INIT, QCAPTURES_1, QCHECKS,
-	  QSEARCH_NO_CHECKS, QCAPTURES_2_INIT, QCAPTURES_2,
-	  QSEARCH_RECAPTURES, QRECAPTURES
+    MAIN_SEARCH, CAPTURES_INIT, GOOD_CAPTURES, KILLERS, COUNTERMOVE, QUIET_INIT, QUIET, BAD_CAPTURES,
+    EVASION, EVASIONS_INIT, ALL_EVASIONS,
+    PROBCUT, PROBCUT_INIT, PROBCUT_CAPTURES,
+    QSEARCH_WITH_CHECKS, QCAPTURES_1_INIT, QCAPTURES_1, QCHECKS,
+    QSEARCH_NO_CHECKS, QCAPTURES_2_INIT, QCAPTURES_2,
+    QSEARCH_RECAPTURES, QRECAPTURES
   };
 
   // partial_insertion_sort() sorts moves in descending order up to and including
@@ -69,10 +68,10 @@ namespace {
 
 /// MovePicker constructor for the main search
 MovePicker::MovePicker(const Position& p, Move ttm, Depth d, const ButterflyHistory* mh,
-					   const CapturePieceToHistory* cph, const PieceToHistory** ch, Move cm,
-					   Move* killers_p) :
-					pos(p), mainHistory(mh), captureHistory(cph), contHistory(ch), countermove(cm),
-					killers{killers_p[0], killers_p[1], killers_p[2], killers_p[3]}, depth(d){
+                       const CapturePieceToHistory* cph, const PieceToHistory** ch, Move cm, Move* killers_p)
+           : pos(p), mainHistory(mh), captureHistory(cph), contHistory(ch), countermove(cm),
+             killers{killers_p[0], killers_p[1]}, depth(d){
+
   assert(d > DEPTH_ZERO);
 
   stage = pos.checkers() ? EVASION : MAIN_SEARCH;
@@ -172,34 +171,16 @@ Move MovePicker::next_move(bool skipQuiets) {
       endMoves = generate<CAPTURES>(pos, cur);
       score<CAPTURES>();
       ++stage;
-	  move = killers[2];  // First capture killer move
-	  if(   move != MOVE_NONE
-		 && move != ttMove
-		 && pos.pseudo_legal(move)
-		 && pos.capture_or_promotion(move))
-	  return move;
       /* fallthrough */
-	  
-  case CAPTURE_KILLERS:
-	   ++stage;
-	   move = killers[3]; // Second capture killer move
-	   if(   move != MOVE_NONE
-		 && move != ttMove
-		 && pos.pseudo_legal(move)
-		 && pos.capture_or_promotion(move))
-	  return move;
-	  /* fallthrough */
 
   case GOOD_CAPTURES:
       while (cur < endMoves)
       {
           move = pick_best(cur++, endMoves);
-		  if (    move != ttMove
-			  && move != killers[2]
-			  && move != killers[3])
-		  {
-			  if (pos.see_ge(move, Value(-55 * (cur-1)->value / 1024)))
-			  return move;
+          if (move != ttMove)
+          {
+              if (pos.see_ge(move, Value(-55 * (cur-1)->value / 1024)))
+                  return move;
 
               // Losing capture, move it to the beginning of the array
               *endBadCaptures++ = move;
